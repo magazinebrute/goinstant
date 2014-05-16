@@ -1,0 +1,102 @@
+
+/****** Object:  StoredProcedure [dbo].[GetJSON]    Script Date: 5/16/2014 9:04:40 AM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+--
+-- Author:      Matthew D. Erwin (Snaptech, LLC)
+-- Create date: May 9, 2013    
+-- Modified date: May 16, 2014 by Rudy E. Hinojosa (CBM Archives, LLC) rudy.hinojosa@cbmarchives.com                                            
+-- Description: Returns the contents of a given table                      
+--              in JavaScript Object Notation JSON - 
+--
+--              Very notably useful for generating MOCK .json files
+--              for testing or before RESTful services are completed.
+--
+--              This implementation:
+--                  *removed cursor (using FOR XML PATH(''))
+--                  *properly supports NULL vs quoted values
+--                  *supports dates in ISO 8601 - presuming UTC
+--                  *uses Data_Type and Is_Nullable info
+--                  *escapes '\'
+--                  *formats output with tabs/newlines
+--                  *can return final results as XML to bypass
+--                   truncation in SSMS
+--                  *supports schema (e.g. [dbo].[TableName]
+--                  *includes "recordCount" field
+-- Options:                                                                
+--      @table_name: the table to execute the query                        
+--      @limit: equivalent to "select top N * from table" 
+--      @ssms: flag to use if executing in Sql Server Management Studio
+--             to bypass result truncation limits.
+--      @isgoinstant: flag to use if importing results to GoInstant database
+-- 
+-- Inspired primarily by the 2008 work of Thiago R. Santos which was influenced by Thomas Frank.
+-- Usage: [dbo].[GetJSON] @Table_name = 'MySchema.MyTable', @limit = 50, @ssms = 0, @isgoinstant = 0
+
+CREATE procedure [dbo].[GetJSON] (
+    @table_name varchar(max), 
+    @limit int = null,
+    @ssms bit = 0,
+	@isgoinstant bit = 0
+)
+as
+begin
+        declare @json varchar(max), @query varchar(max), @table_schema varchar(max) = null
+if( charindex('.', @table_name) > 0 )
+begin
+    set @table_schema = replace(replace( substring(@table_name, 0, charindex('.',@table_name)), '[', ''), ']', '')
+    set @table_name = replace(replace( substring(@table_name, charindex('.',@table_name) + 1,len(@table_name)), '[', ''), ']', '')
+end
+
+set @query = 
+    'select ' + case when @limit is not null then 'top ' + cast(@limit as varchar(32)) + ' ' else '' end + ''' '' + REVERSE(STUFF(REVERSE(''' +
+	--case when @isgoinstant is not null then ('"' + cast(newid() as varchar(max)) + '"' + ': { ') else '' end +
+    CAST((SELECT ' "' + column_name + '" : ' + 
+        case when is_nullable = 'YES' 
+            then ''' + case when [' + column_name + '] is null then ''null'' else ' + 
+				case when data_type like '%binar%' then null else '' end +
+				case when data_type like 'XM%' then null else '' end +
+                case when data_type like '%char%' or data_type like '%text%' then '''"'' + ' else '' end + 
+                case when data_type like '%date%' then 'char(34) + convert(varchar(23),[' + column_name + '], 126) + ''Z'' + char(34)' else 
+                'replace(replace(replace(replace(cast([' + column_name + '] as varchar(max)),''\'',''\\''),''"'',''\"''),char(10),''\n''),char(13),''\n'') ' end + 
+                case when data_type like '%char%' or data_type like '%text%' then '+ ''"''' else '' end + ' end + ''' 
+            else 
+				case when data_type like '%binar%' then null else '' end +
+				case when data_type like 'XM%' then null else '' end +
+                case when data_type like '%char%' or data_type like '%text%' then '"' else '' end + 
+                ''' + ' +
+                case when data_type like '%date%' then 'char(34) + convert(varchar(23),[' + column_name + '], 126) + ''Z + char(34)' else 
+                'replace(replace(replace(replace(cast([' + column_name + '] as varchar(max)),''\'',''\\''),''"'',''\"''),char(10),''\n''),char(13),''\n'') + ''' end +
+                case when data_type like '%char%' or data_type like '%text%' then '"' else '' end end + ',' AS [text()] 
+                from information_schema.columns where table_name = @table_name and (@table_schema is null or table_schema = @table_schema) FOR XML PATH('') ) as varchar(max)) +
+                '''),1,1,'''')) + '' }'' as json into tmpJsonTable from ' + @table_name + ' with(nolock) '
+exec sp_sqlexec @query
+
+if (@isgoinstant = 0)
+set @json = 
+    '{' + char(10) + char(9) +
+    '"recordCount" : ' + Cast((select count(*) from tmpJsonTable) as varchar(32)) + ',' + char(10) + char(9) +
+    '"records" : ' + char(10) + char(9) + char(9) + '[' + char(10)
+    + REVERSE(STUFF(REVERSE(CAST((SELECT char(9) + char(9) + json + ',' + char(10) AS [text()] FROM tmpJsonTable FOR XML PATH('')) AS varchar(max))),1,2,''))
+    + char(10) + char(9) + char(9) + ']' + char(10) + '}'
+else
+	set @json = 
+	'{' + char(10) + char(9) +
+	REVERSE(STUFF(REVERSE(CAST((SELECT case when @isgoinstant is not null then ('"' + cast(newid() as varchar(max)) + '"' + ': { ') else '' end + char(9) + json + ',' + char(10) AS [text()] FROM tmpJsonTable FOR XML PATH('')) AS varchar(max))),1,2,''))
+    + char(10) + char(9) + char(9) + '}'
+
+
+
+drop table tmpJsonTable
+if( @ssms = 1 and len(@json) > 65535 ) --deal with Sql Server Management Studio text/grid truncation
+    select cast('<json><![CDATA[' + @json + ']]></json>' as xml) as jsonString
+else
+    select @json as jsonString
+end
+GO
+
+
