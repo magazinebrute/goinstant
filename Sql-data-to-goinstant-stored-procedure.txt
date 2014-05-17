@@ -69,7 +69,7 @@ set @query =
 				case when data_type like 'XM%' then null else '' end +
                 case when data_type like '%char%' or data_type like '%text%' then '"' else '' end + 
                 ''' + ' +
-                case when data_type like '%date%' then 'char(34) + convert(varchar(23),[' + column_name + '], 126) + ''Z + char(34)' else 
+                case when data_type like '%date%' then 'char(34) + convert(varchar(23),[' + column_name + '], 126) + ''Z'  + char(34) else 
                 'replace(replace(replace(replace(cast([' + column_name + '] as varchar(max)),''\'',''\\''),''"'',''\"''),char(10),''\n''),char(13),''\n'') + ''' end +
                 case when data_type like '%char%' or data_type like '%text%' then '"' else '' end end + ',' AS [text()] 
                 from information_schema.columns where table_name = @table_name and (@table_schema is null or table_schema = @table_schema) FOR XML PATH('') ) as varchar(max)) +
@@ -93,7 +93,7 @@ else
 
 drop table tmpJsonTable
 if( @ssms = 1 and len(@json) > 65535 ) --deal with Sql Server Management Studio text/grid truncation
-    select cast('<json><![CDATA[' + @json + ']]></json>' as xml) as jsonString
+    select cast('<![CDATA[' + @json + ']]>' as xml) as jsonString
 else
     select @json as jsonString
 end
