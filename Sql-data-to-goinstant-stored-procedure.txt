@@ -41,7 +41,7 @@ CREATE procedure [dbo].[GetJSON] (
     @table_name varchar(max), 
     @limit int = null,
     @ssms bit = 0,
-	@isgoinstant bit = 0
+    @isgoinstant bit = 0
 )
 as
 begin
